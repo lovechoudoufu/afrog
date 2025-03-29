@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	_ "net/http/pprof"
@@ -17,6 +18,7 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/result"
 	"github.com/zan8in/afrog/v3/pkg/runner"
 	"github.com/zan8in/afrog/v3/pkg/utils"
+	"github.com/zan8in/fileutil"
 	"github.com/zan8in/gologger"
 )
 
@@ -24,19 +26,43 @@ func main() {
 	options, err := config.NewOptions()
 	if err != nil {
 		gologger.Error().Msg(err.Error())
-		os.Exit(0)
+		return
 	}
+
+	var autoSaveFile string
+	if len(options.Resume) > 0 {
+		// 使用恢复文件路径作为保存路径
+		autoSaveFile = options.Resume
+	} else {
+		// 新扫描任务才生成新文件名
+		baseName := config.GetFileBaseName(options)
+		autoSaveFile = fmt.Sprintf("afrog-resume-%s-%s.afg", baseName, time.Now().Format("20060102-150405"))
+	}
+
+	// 添加正常退出标记
+	var normalExit bool
+	defer func() {
+		// 正常退出时删除自动保存文件
+		if normalExit {
+			if fileutil.FileExists(autoSaveFile) {
+				if err := os.Remove(autoSaveFile); err == nil {
+					gologger.Debug().Msgf("已清理自动保存文件: %s", autoSaveFile)
+				}
+			}
+		}
+		sqlite.CloseX()
+	}()
 
 	r, err := runner.NewRunner(options)
 	if err != nil {
 		gologger.Error().Msgf("Could not create runner: %s\n", err)
-		os.Exit(0)
+		return
 	}
 
 	err = sqlite.InitX()
 	if err != nil {
 		gologger.Error().Msg(err.Error())
-		os.Exit(0)
+		return
 	}
 
 	var (
@@ -97,43 +123,55 @@ func main() {
 
 	}
 
-	// Setup graceful exits
-	// resumeFileName := types.DefaultResumeFilePath()
 	c := make(chan os.Signal, 1)
 	defer close(c)
-	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	go func(runner *runner.Runner) {
 		for range c {
 			gologger.Print().Msg("")
-			gologger.Info().Msg("CTRL+C pressed: Exiting")
-			// gologger.Info().Msgf("Current scan progress: %s\n", runner.ScanProgress.String())
+			gologger.Info().Msg("CTRL+C / Termination signal received")
 
-			resumeFileName, err := runner.ScanProgress.SaveScanProgress()
-			if len(resumeFileName) > 0 {
-				gologger.Info().Msgf("Creating resume file: %s\n", resumeFileName)
-				gologger.Info().Msgf("Resume Example: afrog -resume %s\n", resumeFileName)
+			// 立即保存进度
+			if err := r.ScanProgress.AtomicSave(autoSaveFile); err != nil {
+				gologger.Error().Msgf("Could not preserve scan state: %s", err)
+			} else {
+				gologger.Info().Msgf("Scan state archived: %s\n", autoSaveFile)
+				gologger.Info().Msgf("Resume command: afrog -T urls.txt -resume %s\n", autoSaveFile)
 			}
-			if err != nil {
-				gologger.Error().Msgf("Couldn't create resume file: %s\n", err)
-			}
-			os.Exit(0)
+
+			// 直接退出不触发正常清理
+			sqlite.CloseX()
+			gologger.Info().Msg("Process terminated")
+			os.Exit(1)
 		}
 	}(r)
 
+	// 启动定时保存协程
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := r.ScanProgress.AtomicSave(autoSaveFile); err != nil {
+				gologger.Debug().Msgf("auto save file failed: %s", err)
+			}
+		}
+	}()
+
 	if err := r.Run(); err != nil {
 		gologger.Error().Msgf("runner run err: %s\n", err)
-		os.Exit(0)
+		return
 	}
 
 	if len(options.Json) > 0 || len(options.JsonAll) > 0 {
 		if err := r.JsonReport.AppendEndOfFile(); err != nil {
 			gologger.Error().Msgf("json or json-all output err: %s\n", err)
-			os.Exit(0)
+			return
 		}
 	}
 
 	time.Sleep(time.Second * 3)
 	gologger.Print().Msg("")
 
-	sqlite.CloseX()
+	// 标记正常退出
+	normalExit = true
 }

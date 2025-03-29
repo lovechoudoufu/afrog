@@ -1,69 +1,89 @@
 package runner
 
 import (
-	"fmt"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/rs/xid"
 	fileutil "github.com/zan8in/pins/file"
 )
 
 var PoCScanProgress []string
 
 type ScanProgress struct {
-	progress       []string
-	resumeProgress []string
-	mutex          sync.Mutex
+	mergedProgress  map[string]struct{} // 合并后的完整进度
+	resumeProgress  []string            // 原始恢复文件中的进度
+	currentProgress []string            // 当前扫描新增进度
+	mutex           sync.Mutex
+	saveMutex       sync.Mutex
 }
 
 func NewScanProgress(resume string) (*ScanProgress, error) {
-	progress := make([]string, 0)
-	resumeProgress := make([]string, 0)
+	sp := &ScanProgress{
+		mergedProgress:  make(map[string]struct{}),
+		resumeProgress:  make([]string, 0),
+		currentProgress: make([]string, 0),
+	}
 
 	if len(resume) > 0 {
-		if rsChan, err := fileutil.ReadFile(resume); err != nil {
-			return nil, err
-		} else {
+		if rsChan, err := fileutil.ReadFile(resume); err == nil {
 			for r := range rsChan {
 				list := strings.Split(r, ",")
-				resumeProgress = append(resumeProgress, list...)
+				for _, id := range list {
+					sp.mergedProgress[id] = struct{}{}
+					sp.resumeProgress = append(sp.resumeProgress, id)
+				}
 			}
 		}
 	}
 
-	return &ScanProgress{
-		progress:       progress,
-		resumeProgress: resumeProgress,
-	}, nil
+	return sp, nil
 }
 
 func (p *ScanProgress) Increment(id string) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	p.progress = append(p.progress, id)
+	if _, exists := p.mergedProgress[id]; !exists {
+		p.mergedProgress[id] = struct{}{}
+		p.currentProgress = append(p.currentProgress, id)
+	}
 }
 
 func (p *ScanProgress) Contains(id string) bool {
-	for _, item := range p.resumeProgress {
-		if item == id {
-			return true
-		}
-	}
-	return false
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	_, exists := p.mergedProgress[id]
+	return exists
 }
 
-func (p *ScanProgress) String() string {
-	return strings.Join(p.progress, ",")
-}
+// func (p *ScanProgress) String() string {
+// 	return strings.Join(p.progress, ",")
+// }
 
-func (p *ScanProgress) SaveScanProgress() (string, error) {
-	resumeFileName := fmt.Sprintf("afrog-resume-%s.afg", xid.New().String())
+// 新增方法：原子化保存到指定文件
+func (p *ScanProgress) AtomicSave(filename string) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
 
-	if len(p.progress) > 0 {
-		return resumeFileName, os.WriteFile(resumeFileName, []byte(strings.Join(p.progress, ",")), 0666)
+	// 合并历史进度和当前进度
+	fullProgress := append(p.resumeProgress, p.currentProgress...)
+	data := strings.Join(fullProgress, ",")
+
+	// 空数据不保存
+	if len(data) == 0 {
+		return nil
 	}
 
-	return "", nil
+	// 文件操作专用锁
+	p.saveMutex.Lock()
+	defer p.saveMutex.Unlock()
+
+	// 使用临时文件保证原子性
+	tmpFile := filename + ".tmp"
+	if err := os.WriteFile(tmpFile, []byte(data), 0666); err != nil {
+		return err
+	}
+
+	// 原子替换文件
+	return os.Rename(tmpFile, filename)
 }
