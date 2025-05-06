@@ -194,7 +194,7 @@ func NewOptions() (*Options, error) {
 		flagSet.StringVarP(&options.Cyberspace, "cyberspace", "cs", "", "cyberspace search, eg: -cs zoomeye"),
 		flagSet.StringVarP(&options.Query, "query", "q", "", "cyberspace search keywords, eg: -q app:'tomcat'"),
 		flagSet.IntVarP(&options.QueryCount, "query-count", "qc", 100, "cyberspace search data count, eg: -qc 1000"),
-		flagSet.StringVar(&options.Resume, "resume", "", "resume scan using resume.cfg"),
+		flagSet.StringVar(&options.Resume, "resume", "", "resume scan using resume.afg"),
 		flagSet.StringVar(&options.OOB, "oob", "", "set Out-of-Band (OOB) adapter, eg: -oob ceyeio or -oob dnslogcn or -oob alphalog"),
 	)
 
@@ -292,6 +292,11 @@ func (opt *Options) VerifyOptions() error {
 		}
 	}
 
+	if opt.Version {
+		// ShowVersion(au, "")
+		os.Exit(0)
+	}
+
 	config, err := NewConfig(opt.ConfigFile)
 	if err != nil {
 		return err
@@ -306,11 +311,6 @@ func (opt *Options) VerifyOptions() error {
 		if dingtalk.IsTokensEmpty(opt.Config.Webhook.Dingtalk.Tokens) {
 			return fmt.Errorf("Dingtalk webhook token is required")
 		}
-	}
-
-	if opt.Version {
-		ShowVersion()
-		os.Exit(0)
 	}
 
 	if opt.Web {
@@ -368,7 +368,7 @@ func (opt *Options) VerifyOptions() error {
 
 	if len(opt.Target) > 0 || len(opt.TargetsFile) > 0 || (len(opt.Cyberspace) > 0 && len(opt.Query) > 0) {
 
-		ShowBanner(au)
+		ShowBanner(au, "")
 
 		// oob setting
 		// opt.SetOOBAdapter()

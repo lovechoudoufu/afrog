@@ -1,68 +1,104 @@
+// pkg/config/banner.go
 package config
 
 import (
 	"fmt"
-	"time"
+	"strings"
 
+	"github.com/gookit/color"
 	"github.com/zan8in/afrog/v3/pkg/log"
 	"github.com/zan8in/afrog/v3/pkg/utils"
-	"github.com/zan8in/gologger"
 )
 
-const Version = "3.1.6"
+const (
+	Version     = "3.1.7"
+	ProjectName = "Afrog"
+	Codename    = "Life is fantastic. Enjoy life."
+	LineWidth   = 56
+)
 
-func InitBanner() {
-	fmt.Printf("\r\n|\tA F 🐸 O G\t|")
+var (
+	updateSymbol string
+	okSymbol     string
+	errorSymbol  string
+)
+
+func GetOkSymbol() string {
+	return okSymbol
 }
-func ShowBanner(u *AfrogUpdate) {
-	InitBanner()
-	fmt.Printf("\r\t\t\t\t%s/%s\t|\t%s\n\n", EngineV(u), PocV(u), "Ne Zha 2")
+
+func GetErrorSymbol() string {
+	return errorSymbol
 }
 
-func BannerAnimate(u *AfrogUpdate) {
-	animationChars := []rune{'|', '\\', '-', '/'}
-
-	for i := 0; i < 1000; i++ {
-		for _, char := range animationChars {
-			fmt.Printf("\r%c\tA F 🐸 O G\t%c", char, char)
-			fmt.Printf("\r\t\t\t\t%s/%s\t%c\t%s", EngineV(u), PocV(u), char, "Dream a dream for you")
-			time.Sleep(100 * time.Millisecond)
-		}
+func initSymbols() {
+	if utils.IsUnicodeSupported() {
+		updateSymbol = "↑"
+		okSymbol = "✓"
+		errorSymbol = "✖"
+	} else {
+		updateSymbol = "^"
+		okSymbol = "√"
+		errorSymbol = "X"
 	}
 }
 
-func ShowVersion() {
-	fmt.Printf("\r\nafrog Version %s\n\n", Version)
+func ShowBanner(u *AfrogUpdate, oobStatus string) {
+	initSymbols()
+
+	// 第一行标题
+	title := fmt.Sprintf("%s/%s | %s | %s",
+		color.FgLightBlue.Render(ProjectName),
+		Version,
+		color.FgYellow.Render("Security Toolkit"),
+		color.FgLightMagenta.Render(Codename),
+	)
+	fmt.Println("\n" + title)
+
+	// 分隔线
+	PrintSeparator()
+
+	// 核心信息行
+	PrintStatusLine(
+		log.LogColor.Low(okSymbol),
+		"Core:",
+		EngineV(u),
+		"",
+	)
+
+	// POC信息行
+	pocLine := PocV(u)
+	if utils.Compare(u.LastestVersion, ">", u.CurrVersion) {
+		pocLine += " " + log.LogColor.Extractor("(update available)")
+	}
+	PrintStatusLine(
+		log.LogColor.Low(okSymbol),
+		"POC: ",
+		pocLine,
+		"",
+	)
+}
+
+func PrintSeparator() {
+	fmt.Println(log.LogColor.DarkGray(strings.Repeat("═", LineWidth)))
+}
+
+func PrintStatusLine(symbol, label, value, note string) {
+	fmt.Printf("[%s] %-6s %-18s %s\n", symbol, label, value, note)
 }
 
 func EngineV(u *AfrogUpdate) string {
+	version := Version
 	if utils.Compare(u.LastestAfrogVersion, ">", Version) {
-		return Version + " (" + log.LogColor.Red("outdated") + ")" + " > " + log.LogColor.Red(u.LastestAfrogVersion)
+		return version + log.LogColor.Red(updateSymbol) + log.LogColor.DarkGray(" (up to date)")
 	}
-	return Version
+	return log.LogColor.Green(version)
 }
 
 func PocV(u *AfrogUpdate) string {
+	base := u.CurrVersion
 	if utils.Compare(u.LastestVersion, ">", u.CurrVersion) {
-		return u.CurrVersion + " > " + log.LogColor.Red(u.LastestVersion)
+		return fmt.Sprintf("%s → %s", base, log.LogColor.Red(u.LastestVersion))
 	}
-	return u.CurrVersion
-}
-
-func ShowUpgradeBanner(au *AfrogUpdate) {
-	messageStr := ""
-	if utils.Compare(au.LastestAfrogVersion, ">", Version) {
-		messageStr = " (" + log.LogColor.Red(au.LastestAfrogVersion) + ")"
-	} else {
-		messageStr = " (" + log.LogColor.Green("latest") + ")"
-	}
-	gologger.Print().Msgf("Using afrog Engine %s%s", Version, messageStr)
-
-	messageStr2 := ""
-	if utils.Compare(au.LastestVersion, ">", au.CurrVersion) {
-		messageStr2 = " (" + log.LogColor.Red(au.LastestVersion) + ")"
-	} else {
-		messageStr2 = " (" + log.LogColor.Green("latest") + ")"
-	}
-	gologger.Print().Msgf("Using afrog-pocs %s%s", au.CurrVersion, messageStr2)
+	return log.LogColor.Green(base)
 }

@@ -78,12 +78,9 @@ func main() {
 				if !options.Silent {
 					// 花里胡哨的进度条，看起来炫，实际并没什么卵用！ @edit 2024/01/03
 					pgress := int(options.CurrentCount) * 100 / options.Count
-					// bar := progress.CreateProgressBar(pgress, 50, '|', '=')
-					// bar := progress.CreateProgressBar(pgress, 50, '▉', '░') 操蛋的 windows cmd 不兼容漂亮的进度条
-					// fmt.Printf("\r%s %d%% (%d/%d), %s", bar, pgress, options.CurrentCount, options.Count, strings.Split(time.Since(starttime).String(), ".")[0]+"s")
-					// fmt.Printf("\r%d%% (%d/%d), %s", int(options.CurrentCount)*100/int(options.Count), options.CurrentCount, options.Count, strings.Split(time.Since(starttime).String(), ".")[0]+"s")
-					// fmt.Printf("\r%d/%d/%d%%/%s", options.CurrentCount, options.Count, int(options.CurrentCount)*100/int(options.Count), strings.Split(time.Since(starttime).String(), ".")[0]+"s")
+					// 兼容性进度条 @edit 2025/03/29
 					fmt.Printf("\r[%s] %d%% (%d/%d), %s", progress.GetProgressBar(pgress, 0), pgress, options.CurrentCount, options.Count, strings.Split(time.Since(starttime).String(), ".")[0]+"s")
+					// fmt.Printf("\r[%s] %d%% (%d/%d), %s", progress.CreateProgressBar(pgress, 50, '▉', '░'), pgress, options.CurrentCount, options.Count, strings.Split(time.Since(starttime).String(), ".")[0]+"s")
 				}
 			}()
 		}
@@ -129,19 +126,19 @@ func main() {
 	go func(runner *runner.Runner) {
 		for range c {
 			gologger.Print().Msg("")
-			gologger.Info().Msg("CTRL+C / Termination signal received")
+			gologger.Info().Msg("Scan termination signal received")
 
 			// 立即保存进度
 			if err := r.ScanProgress.AtomicSave(autoSaveFile); err != nil {
 				gologger.Error().Msgf("Could not preserve scan state: %s", err)
 			} else {
 				gologger.Info().Msgf("Scan state archived: %s\n", autoSaveFile)
-				gologger.Info().Msgf("Resume command: afrog -T urls.txt -resume %s\n", autoSaveFile)
+				// gologger.Info().Msgf("Resume command: afrog -T urls.txt -resume %s\n", autoSaveFile)
 			}
 
 			// 直接退出不触发正常清理
 			sqlite.CloseX()
-			gologger.Info().Msg("Process terminated")
+			// gologger.Info().Msg("Process terminated (exit code 1)")
 			os.Exit(1)
 		}
 	}(r)
