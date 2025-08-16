@@ -14,6 +14,7 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/output"
 	"github.com/zan8in/afrog/v3/pkg/poc"
 	"github.com/zan8in/afrog/v3/pkg/utils"
+	"github.com/zan8in/afrog/v3/pkg/validator"
 	"github.com/zan8in/afrog/v3/pkg/web"
 	"github.com/zan8in/afrog/v3/pkg/webhook/dingtalk"
 	"github.com/zan8in/afrog/v3/pocs"
@@ -180,6 +181,9 @@ type Options struct {
 
 	// path to the afrog configuration file
 	ConfigFile string
+
+	// Validate POC YAML syntax
+	Validate string
 }
 
 func NewOptions() (*Options, error) {
@@ -254,6 +258,7 @@ func NewOptions() (*Options, error) {
 	flagSet.CreateGroup("debug", "Debug",
 		flagSet.BoolVar(&options.Debug, "debug", false, "show all requests and responses"),
 		flagSet.BoolVarP(&options.Version, "version", "v", false, "show afrog version"),
+		flagSet.StringVar(&options.Validate, "validate", "", "validate POC YAML syntax, support file or directory"),
 	)
 
 	flagSet.CreateGroup("server", "Server",
@@ -278,6 +283,11 @@ func NewOptions() (*Options, error) {
 }
 
 func (opt *Options) VerifyOptions() error {
+
+	if len(opt.Validate) > 0 {
+		validator.ValidatePocFiles(opt.Validate)
+		os.Exit(0)
+	}
 
 	// update afrog-pocs
 	au, err := NewAfrogUpdate(true)
