@@ -23,6 +23,7 @@ import (
 )
 
 func main() {
+
 	options, err := config.NewOptions()
 	if err != nil {
 		gologger.Error().Msg(err.Error())
