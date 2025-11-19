@@ -1,17 +1,19 @@
 package raw
 
 import (
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"strings"
-	"time"
+    "bytes"
+    "compress/gzip"
+    "fmt"
+    "io"
+    "net/http"
+    "net/http/httputil"
+    "net/url"
+    "strings"
+    "time"
 
-	"github.com/zan8in/afrog/v3/pkg/proto"
-	"github.com/zan8in/afrog/v3/pkg/protocols/http/retryhttpclient"
-	"github.com/zan8in/rawhttp"
+    "github.com/zan8in/afrog/v3/pkg/proto"
+    "github.com/zan8in/afrog/v3/pkg/protocols/http/retryhttpclient"
+    "github.com/zan8in/rawhttp"
 )
 
 var (
@@ -112,12 +114,23 @@ func (r *RawHttp) RawHttpRequest(request, baseurl string, header []string, varia
 
 	newheader := appendHeader(request, header)
 
-	rhttp, err := Parse(newheader, baseurl, true)
-	if err != nil {
-		return fmt.Errorf("parse Failed, %s", err.Error())
-	}
+    rhttp, err := Parse(newheader, baseurl, true)
+    if err != nil {
+        return fmt.Errorf("parse Failed, %s", err.Error())
+    }
 
-	resp, err = r.RawhttpClient.DoRaw(rhttp.Method, baseurl, rhttp.Path, ExpandMapValues(rhttp.Headers), io.NopCloser(strings.NewReader(rhttp.Data)))
+    ct := strings.ToLower(rhttp.Headers["Content-Type"])
+    if strings.Contains(ct, "multipart/") {
+        if strings.Contains(rhttp.Data, "\n") && !strings.Contains(rhttp.Data, "\r\n") {
+            rhttp.Data = strings.ReplaceAll(rhttp.Data, "\n", "\r\n")
+            if !strings.HasSuffix(rhttp.Data, "\r\n") {
+                rhttp.Data = rhttp.Data + "\r\n"
+            }
+        }
+        rhttp.Headers["Content-Length"] = fmt.Sprintf("%d", len(rhttp.Data))
+    }
+
+    resp, err = r.RawhttpClient.DoRaw(rhttp.Method, baseurl, rhttp.Path, ExpandMapValues(rhttp.Headers), io.NopCloser(strings.NewReader(rhttp.Data)))
 	if err != nil {
 		//fmt.Println(err.Error())
 		return fmt.Errorf("doRaw Failed, %s", err.Error())
@@ -127,23 +140,23 @@ func (r *RawHttp) RawHttpRequest(request, baseurl string, header []string, varia
 	// 新增最大响应体限制
 	// @editor 2024/02/06
 	maxDefaultBody := int64(r.MaxRespBodySize * 1024 * 1024)
-	reader := io.LimitReader(resp.Body, maxDefaultBody)
-	respBody, err := io.ReadAll(reader)
-	if err != nil {
-		return fmt.Errorf("readAll Failed, %s", err.Error())
-	}
+    reader := io.LimitReader(resp.Body, maxDefaultBody)
+    respBody, err := io.ReadAll(reader)
+    if err != nil {
+        return fmt.Errorf("readAll Failed, %s", err.Error())
+    }
 
 	dumpedResponseHeaders, err := httputil.DumpResponse(resp, false)
 	if err != nil {
 		return fmt.Errorf("dumpResponse Failed, %s", err.Error())
 	}
 
-	tempResultResponse := &proto.Response{}
-	tempResultResponse.Status = int32(resp.StatusCode)
-	if requrl, err := url.Parse(baseurl); err == nil {
-		tempResultResponse.Url = retryhttpclient.Url2UrlType(requrl)
-	}
-	newheader2 := make(map[string]string)
+    tempResultResponse := &proto.Response{}
+    tempResultResponse.Status = int32(resp.StatusCode)
+    if requrl, err := url.Parse(baseurl); err == nil {
+        tempResultResponse.Url = retryhttpclient.Url2UrlType(requrl)
+    }
+    newheader2 := make(map[string]string)
 	respHeaderSlice := strings.Split(strings.TrimSpace(string(dumpedResponseHeaders)), "\n")
 	for _, h := range respHeaderSlice {
 		h = strings.Trim(h, "\r\n")
@@ -160,11 +173,20 @@ func (r *RawHttp) RawHttpRequest(request, baseurl string, header []string, varia
 		}
 	}
 	tempResultResponse.Headers = newheader2
-	tempResultResponse.ContentType = resp.Header.Get("Content-Type")
-	tempResultResponse.Body = respBody
-	tempResultResponse.Raw = []byte(string(dumpedResponseHeaders) + "\n" + string(respBody))
-	tempResultResponse.RawHeader = dumpedResponseHeaders
-	variableMap["response"] = tempResultResponse
+    tempResultResponse.ContentType = resp.Header.Get("Content-Type")
+
+    // gzip 解压支持
+    bodyOut := respBody
+    if strings.Contains(strings.ToLower(resp.Header.Get("Content-Encoding")), "gzip") {
+        if decompressed, derr := gunzip(respBody); derr == nil {
+            bodyOut = decompressed
+        }
+    }
+
+    tempResultResponse.Body = bodyOut
+    tempResultResponse.Raw = []byte(string(dumpedResponseHeaders) + "\n" + string(bodyOut))
+    tempResultResponse.RawHeader = dumpedResponseHeaders
+    variableMap["response"] = tempResultResponse
 
 	tempResultRequest := &proto.Request{}
 	tempResultRequest.Method = rhttp.Method
@@ -206,9 +228,9 @@ func (r *RawHttp) RawHttpRequest(request, baseurl string, header []string, varia
 	tempResultRequest.ContentType = tempResultRequest.Headers["content-type"]
 	variableMap["request"] = tempResultRequest
 
-	variableMap["fulltarget"] = fmt.Sprintf("%s://%s%s", tempResultRequest.Url.Scheme, tempResultRequest.Url.Host, tempResultRequest.Url.Path)
+    variableMap["fulltarget"] = fmt.Sprintf("%s://%s%s", tempResultRequest.Url.Scheme, tempResultRequest.Url.Host, rhttp.Path)
 
-	return err
+    return err
 }
 
 func AssignVariableRaw(find string, variableMap map[string]any) string {
@@ -221,4 +243,21 @@ func AssignVariableRaw(find string, variableMap map[string]any) string {
 		find = strings.ReplaceAll(find, oldstr, newstr)
 	}
 	return find
+}
+
+func gunzip(data []byte) ([]byte, error) {
+    if len(data) == 0 {
+        return data, nil
+    }
+    br := bytes.NewReader(data)
+    zr, err := gzip.NewReader(br)
+    if err != nil {
+        return nil, err
+    }
+    defer zr.Close()
+    out, err := io.ReadAll(zr)
+    if err != nil {
+        return nil, err
+    }
+    return out, nil
 }
